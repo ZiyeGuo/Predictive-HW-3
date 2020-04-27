@@ -1,0 +1,92 @@
+# HW 3: 
+# I want to compare the model with lagged predictors with two other models that I recently learned. 
+# I use insurance data because I want to see if the spending in advertising in the previous months has an effect on the current quotation numbers. 
+
+# Import data:
+force(insurance)
+head(insurance)
+quotes <- ts(insurance[,"Quotes"], frequency = 12, start = c(2002, 1))
+advert <- ts(insurance[,"TV.advert"], frequency = 12, start = c(2002, 1))
+
+# Plot data:
+autoplot(insurance, facets=TRUE) +
+  xlab("Year") + ylab("") +
+  ggtitle("Insurance advertising and quotations")
+# We can see that the plots do not show any trend or strong seasonality. This is stationary data already. 
+
+# Check stationarity:
+ndiffs(quotes)
+ndiffs(advert)
+# No need for data transformation, it is stationary.
+
+# First model: Auto-arima with lagged predictors:
+
+# Select number of lags:
+insurancets <- as.ts(insurance)
+VARselect(insurancets[,1:2], lag.max=8, type="const")[["selection"]]
+# Information criteria says lag=2 is the optimal lag number. 
+# But to be sure, i include advertising expenditure for up to four months.
+# Which means that the models include advertising expenditure in the current month, and the three months before that.
+
+# Construct advert with 0, 1, 2 or 3 lags:
+Advert <- cbind(
+  AdLag0 = insurance[,"TV.advert"],
+  AdLag1 = stats::lag(insurance[,"TV.advert"],-1), 
+  AdLag2 = stats::lag(insurance[,"TV.advert"],-2), 
+  AdLag3 = stats::lag(insurance[,"TV.advert"],-3))  
+Advert %>% head(NROW(insurance))
+
+# Build models using the lags:
+fit1 <- auto.arima(insurance[4:40,1], xreg=Advert[4:40,1], stationary=TRUE)
+fit2 <- auto.arima(insurance[4:40,1], xreg=Advert[4:40,1:2], stationary=TRUE)
+fit3 <- auto.arima(insurance[4:40,1], xreg=Advert[4:40,1:3], stationary=TRUE)
+fit4 <- auto.arima(insurance[4:40,1], xreg=Advert[4:40,1:4], stationary=TRUE)
+
+# Choose optimal lag:
+c(fit1[["aicc"]],fit2[["aicc"]],fit3[["aicc"]],fit4[["aicc"]])
+# AICc for lag=1 is 60.02, the smallest of all. 
+# Same result as VARselect test, two lagged predictors is the best. 
+
+# So I will use the model that includes advertising only in the current month and the previous month and apply to all data.
+summary(fit2)
+# The estimated coefficient for the current month advertising is 1.277 and for the previous month is 0.275. 
+# This means that if the company increases the spending on advertising in current month by 1 unit, the expected increase in quotations will be 1.277.
+# And, the increase in the spending in the previous month had brought the company 0.277 more quatation in the current month. 
+
+# Forecast:
+fc8 <- forecast(fit2, h=20, xreg=cbind(AdLag0 = rep(8,20),
+                                      AdLag1 = c(Advert[40,1], rep(8,19)))) 
+autoplot(fc8) + ylab("Quotes") +
+  ggtitle("Forecast quotes with future advertising set to 8")
+# The model provides a narrow prediction. 
+
+
+# Second model: VAR model:
+var2 <- VAR(insurance[,1:2], p=2, type="const") 
+serial.test(var2, lags.pt=10, type="PT.asymptotic")
+summary(var2)
+forecast(var2) %>% autoplot() + xlab("Year")
+# In terms of forecasting on quotation numbers, VAR model provides a less accurate/wider prediction than arima with lagged predictor model. 
+
+
+# Third model:Regression with ARIMA errors in R and forecast with assumption that the future quotation will be equal to the mean quotation from the last three years:
+arimafit <- auto.arima(insurance[,"Quotes"], xreg=insurance[,"TV.advert"])
+summary(arimafit)
+# AICc for the third model is 70.77, while the first model has 60.02357. 
+
+# Plot errors:
+cbind("Regression Errors" = residuals(arimafit, type="regression"), "ARIMA errors" = residuals(arimafit, type="innovation")) %>%
+  autoplot(facets=TRUE)
+checkresiduals(arimafit)
+
+# Forecast:
+fc <- forecast(arimafit, xreg=rep(mean(insurance[,"TV.advert"]),8))  
+autoplot(fc) + xlab("Year") +
+  ylab("Quotation")
+# The forecasts are better than VAR model forecasts, since the prediction interval is narrower. And the prediction interval is similar to that of the arima model with lagged predictors.
+
+# Thus, the first and third model have similar performace and better prediction than the second model (VAR).
+# However, in terms of error, the first model produces AICc of 60.02 compared to 70.77 of the third model. 
+# In conclusion, the first model--arima with lagged predictor is a better model among the three models for insurance data. 
+
+
